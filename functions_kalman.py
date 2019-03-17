@@ -7,7 +7,7 @@ from pyfinance.ols import OLS, RollingOLS, PandasRollingOLS
 import pykalman
 from pykalman import KalmanFilter
 from scipy.interpolate import splrep, splev
-from scipy.stats import wilcoxon
+from scipy.stats import wilcoxon, ttest_rel
 import multiprocessing as mp
 from functools import partial
 
@@ -193,7 +193,7 @@ def plot_prediction_performance(factors, returns, est_sens, name,
 
 def estimate_regression_performance(factors, returns, name, performance_record_mse, 
                                     performance_record_wacc, **kwargs):
-    burn_period = 500
+    burn_period = 1000
     if name[:12] == "Constant OLS":
         start_time = burn_period
         estimated_sensitivities = estimate_sensitivities_cr(factors, returns)
@@ -243,7 +243,7 @@ def estimate_regression_performance(factors, returns, name, performance_record_m
                                         performance_record_wacc,
                                         verbose=False) 
 
-def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, **kwargs):
+def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, return_noise, **kwargs):
     """
     The keyword arguments passed should correspond to the parameters of the algorithms and consists of lists of values to 
     try (a grid search).
@@ -262,7 +262,7 @@ def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, **kw
     for i in range(len(all_values)):
         all_values[i] = dict(zip(parameter_list, all_values[i]))
     
-    func_parallel = partial(generate_sample_hyperparameters, sens_type, timespan, algo_name, all_values)
+    func_parallel = partial(generate_sample_hyperparameters, sens_type, timespan, return_noise, algo_name, all_values)
     
     with mp.Pool(n_processes) as pool:
         outputs = pool.imap_unordered(func_parallel, range(num_samples))
@@ -273,7 +273,7 @@ def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, **kw
     
     return pd.DataFrame(list_performance_record_mse), pd.DataFrame(list_performance_record_wacc)
 
-def generate_sample_hyperparameters(sens_type, timespan, algo_name, all_values, i):
+def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name, all_values, i):
     print(i)
     performance_record_mse = {}
     performance_record_wacc = {}
@@ -283,7 +283,7 @@ def generate_sample_hyperparameters(sens_type, timespan, algo_name, all_values, 
     # Factors
     factors = get_factors(timespan)
     # Returns
-    returns = get_returns(timespan, factors, sens, 1.0)
+    returns = get_returns(timespan, factors, sens, return_noise)
 
     for kwargs in all_values:
         name = algo_name + ' - ' + str(kwargs)
@@ -291,12 +291,12 @@ def generate_sample_hyperparameters(sens_type, timespan, algo_name, all_values, 
     return i, performance_record_mse, performance_record_wacc
    
    
-def get_performance_data(num_samples, sens_type, timespan, algo_parameters, sens=None):
+def get_performance_data(num_samples, sens_type, timespan, return_noise, algo_parameters, sens=None):
     list_performance_record_mse = []
     list_performance_record_wacc = []
-    n_processes = 5
+    n_processes = 7
     
-    func_parallel = partial(generate_sample_performance, sens_type, timespan, algo_parameters, sens)
+    func_parallel = partial(generate_sample_performance, sens_type, timespan, return_noise, algo_parameters, sens)
     
     with mp.Pool(n_processes) as pool:
         outputs = pool.imap_unordered(func_parallel, range(num_samples))
@@ -308,7 +308,7 @@ def get_performance_data(num_samples, sens_type, timespan, algo_parameters, sens
     return pd.DataFrame(list_performance_record_mse), pd.DataFrame(list_performance_record_wacc)
     
 
-def generate_sample_performance(sens_type, timespan, algo_parameters, sens, i):
+def generate_sample_performance(sens_type, timespan, return_noise, algo_parameters, sens, i):
     performance_record_mse = {}
     performance_record_wacc = {}
     rolling_ols_window = algo_parameters['rolling_ols_window']
@@ -322,7 +322,7 @@ def generate_sample_performance(sens_type, timespan, algo_parameters, sens, i):
     # Factors
     factors = get_factors(timespan)
     # Returns
-    returns = get_returns(timespan, factors, sens, 1.0)
+    returns = get_returns(timespan, factors, sens, return_noise)
             
     estimate_regression_performance(factors, returns, "Constant OLS", 
                                     performance_record_mse, performance_record_wacc)
@@ -344,7 +344,27 @@ def generate_sample_performance(sens_type, timespan, algo_parameters, sens, i):
     return i, performance_record_mse, performance_record_wacc
     
     
-def print_t_stat(performance, reference=None):
+def performance_summary(performance, metric):
+    mean_metric = performance.mean()
+    if metric == "Weighted accuracy":
+        ordered_metric = mean_metric.sort_values(ascending=False)
+    elif metric == "MSE":
+        ordered_metric = mean_metric.sort_values()
+    
+    relative_performance = performance[ordered_metric.index].diff(-1, axis=1)
+    wil_pvalue = lambda x : wilcoxon(x)[1]
+    w_test = relative_performance.apply(wil_pvalue, axis=0)
+    w_test[-1] = np.nan
+    t_pvalue = lambda x : ttest_rel(x, np.zeros(len(performance)))[1]
+    t_test = relative_performance.apply(t_pvalue, axis=0)
+
+    summary = pd.concat([ordered_metric, t_test, w_test], axis=1)
+    summary.columns = [metric, 't-test differential p-value', 'Wilcoxon test differential p-value']
+    return summary
+    
+    
+    
+def compute_t_stat(performance, reference=None):
     if reference is None:
         ref_column = performance.iloc[:,0]
     else:
@@ -356,6 +376,20 @@ def print_t_stat(performance, reference=None):
     else:
         t_stat.loc[reference] = 0
     return t_stat
+    
+def compute_wilcoxon_pvalue(performance, reference=None):
+    if reference is None:
+        ref_column = performance.iloc[:,0]
+    else:
+        ref_column = performance.loc[:,reference]
+    rel_performance = performance.subtract(ref_column, axis = 0)
+    wil_pvalue = lambda x : wilcoxon(x)[1]
+    w_test = rel_performance.apply(wil_pvalue, axis=0)
+    if reference is None:
+        w_test.iloc[0] = np.nan
+    else:
+        w_test.loc[reference] = np.nan
+    return w_test
     
 def plot_t_stat_differences(performance, reference=None):
     if reference is None:
