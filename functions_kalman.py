@@ -204,7 +204,9 @@ def plot_residuals(estimated_returns, returns):
     Plot the residuals of the estimated returns.
     """
     residuals = estimated_returns - returns
+    plt.gca().set_title("Residuals")
     plt.scatter(residuals.index, residuals, s=0.5)
+
    
    
 def print_mse_performance(estimated_returns, returns, name, performance_record_mse, verbose=True):
