@@ -1,4 +1,5 @@
 import itertools
+import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -87,24 +88,25 @@ def estimate_sensitivities_rr(factors, returns, window):
     
     
 def estimate_sensitivities_err(factors, returns, lambd):
-    ff = np.zeros([3,3])
-    fr = np.zeros(3)
+    num_factors = factors.shape[1]
+    ff = np.zeros([num_factors,num_factors])
+    fr = np.zeros(num_factors)
     est_sens_list = []
     for i, row in factors.iterrows():
         ff = (1-lambd)*ff + lambd*np.outer(row, row)
         fr = (1-lambd)*fr + lambd*np.dot(row, returns.iloc[i])
-        est_sens = np.dot(np.linalg.inv(ff + 1e-9*np.eye(3)), fr)
+        est_sens = np.dot(np.linalg.inv(ff + 1e-12*np.eye(num_factors)), fr)
         est_sens_list.append(est_sens)
     return pd.DataFrame(est_sens_list)  
     
     
 def estimate_sensitivities_kf(factors, returns, covariance_ratio):
-    n_dim_state=3
+    n_dim_state=factors.shape[1]
     n_dim_obs=1
     observation_covariance = 1
-    transition_covariance = np.eye(3)*covariance_ratio
+    transition_covariance = np.eye(n_dim_state)*covariance_ratio
     observation_matrices = factors.values[:,np.newaxis,:]
-    kf = KalmanFilter(initial_state_mean=[0,0,0], 
+    kf = KalmanFilter(initial_state_mean=np.zeros(n_dim_state), 
                       n_dim_state=n_dim_state, 
                       n_dim_obs=n_dim_obs, 
                       observation_matrices=observation_matrices,
@@ -121,15 +123,16 @@ def estimate_sensitivities_ntc(estimated_sensitivities, trend_factor, window):
     
     
 def estimate_sensitivities_stkf(factors, returns, covariance_ratio):
-    n_dim_state=6
+    n_dim_state=factors.shape[1]*2
     n_dim_obs=1
     observation_covariance = 1
-    transition_covariance = covariance_ratio*np.eye(6)
-    observation_matrices = np.array([factors.values[:, 0], 0*factors.values[:, 0],
+    transition_covariance = covariance_ratio*np.eye(n_dim_state)
+    observation_matrices = np.array([((i+1)%2)*factors.values[:, math.floor(i/2)] for i in range(n_dim_state)]).transpose()[:, np.newaxis,:]
+    """observation_matrices = np.array([factors.values[:, 0], 0*factors.values[:, 0],
                                      factors.values[:, 1], 0*factors.values[:, 1],
-                                     factors.values[:, 2], 0*factors.values[:, 2]]).transpose()[:, np.newaxis,:]
-    transition_matrix = np.kron(np.eye(3), np.array([[1, 1], [0, 1]]))
-    kf = KalmanFilter(initial_state_mean=[0, 0, 0, 0, 0, 0], 
+                                     factors.values[:, 2], 0*factors.values[:, 2]]).transpose()[:, np.newaxis,:]"""
+    transition_matrix = np.kron(np.eye(factors.shape[1]), np.array([[1, 1], [0, 1]]))
+    kf = KalmanFilter(initial_state_mean=np.zeros(n_dim_state), 
                       n_dim_state=n_dim_state, 
                       n_dim_obs=n_dim_obs, 
                       observation_matrices=observation_matrices,
@@ -138,7 +141,7 @@ def estimate_sensitivities_stkf(factors, returns, covariance_ratio):
                       transition_matrices=transition_matrix
                      )
     filtered_state_means, filtered_state_covariances = kf.filter(returns)
-    return pd.DataFrame(filtered_state_means[:,[0,2,4]])
+    return pd.DataFrame(filtered_state_means[:,[i for i in range(n_dim_state) if i%2 == 0]])
     
 
 # Evaluation
@@ -191,26 +194,23 @@ def plot_prediction_performance(factors, returns, est_sens, name,
     plot_residuals(estimated_returns, returns)
   
 
-def estimate_regression_performance(factors, returns, name, performance_record_mse, 
-                                    performance_record_wacc, **kwargs):
-    burn_period = 1000
+def estimate_regression_performance(factors, returns, sensitivities, name,
+                                    performance_record_mse, performance_record_wacc, 
+                                    **kwargs):
+    start_time = 1000
     if name[:12] == "Constant OLS":
-        start_time = burn_period
         estimated_sensitivities = estimate_sensitivities_cr(factors, returns)
         estimated_sensitivities = estimated_sensitivities.iloc[start_time:,:]
     elif name[:11] == "Rolling OLS":
-        start_time = burn_period
         rolling_ols_window = kwargs['rolling_ols_window']
         estimated_sensitivities = estimate_sensitivities_rr(factors, returns, rolling_ols_window)
-        estimated_sensitivities = estimated_sensitivities.iloc[burn_period - rolling_ols_window + 1:,:]
+        estimated_sensitivities = estimated_sensitivities.iloc[start_time - rolling_ols_window + 1:,:]
     elif name[:23] == "Exponential rolling OLS":
-        start_time = burn_period
         exp_rolling_ols_lambda = kwargs['exp_rolling_ols_lambda']
         estimated_sensitivities = estimate_sensitivities_err(factors, returns, 
                                                              exp_rolling_ols_lambda)
         estimated_sensitivities = estimated_sensitivities.iloc[start_time:,:]
     elif name[:18] == "Kalman naive trend":
-        start_time = burn_period
         kalman_covariance_ratio = kwargs['kalman_covariance_ratio']
         nt_factor = kwargs['nt_factor']
         nt_window = kwargs['nt_window']
@@ -219,16 +219,16 @@ def estimate_regression_performance(factors, returns, name, performance_record_m
         estimated_sensitivities = estimate_sensitivities_ntc(estimated_sensitivities_kf, 
                                                              nt_factor, nt_window)
         estimated_sensitivities = estimated_sensitivities.iloc[start_time:,:]
-    elif name[:18] == "Kalman stoch trend":
-        start_time = burn_period
+    elif name[:18] == "Kalman local trend":
         stkf_covariance_ratio = kwargs['stkf_covariance_ratio']
         estimated_sensitivities = estimate_sensitivities_stkf(factors, returns, stkf_covariance_ratio)
         estimated_sensitivities = estimated_sensitivities.iloc[start_time:,:]
     elif name[:6] == "Kalman":
-        start_time = burn_period
         kalman_covariance_ratio = kwargs['kalman_covariance_ratio']
         estimated_sensitivities = estimate_sensitivities_kf(factors, returns, kalman_covariance_ratio)
         estimated_sensitivities = estimated_sensitivities.iloc[start_time:,:]
+    elif name == "Oracle":
+        estimated_sensitivities = sensitivities.iloc[start_time:,:]
     else:
         print("Unknown name")
     estimated_returns = compute_estimated_returns(factors.iloc[start_time:,:], estimated_sensitivities)
@@ -252,7 +252,7 @@ def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, retu
     value_list = []
     list_performance_record_mse = []
     list_performance_record_wacc = []
-    n_processes = 7
+    n_processes = 5
     
     for parameter, par_value_list in kwargs.items():
         parameter_list.append(parameter)
@@ -287,7 +287,7 @@ def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name
 
     for kwargs in all_values:
         name = algo_name + ' - ' + str(kwargs)
-        estimate_regression_performance(factors, returns, name, performance_record_mse, performance_record_wacc, **kwargs)
+        estimate_regression_performance(factors, returns, sens, name, performance_record_mse, performance_record_wacc, **kwargs)
     return i, performance_record_mse, performance_record_wacc
    
    
@@ -324,21 +324,24 @@ def generate_sample_performance(sens_type, timespan, return_noise, algo_paramete
     # Returns
     returns = get_returns(timespan, factors, sens, return_noise)
             
-    estimate_regression_performance(factors, returns, "Constant OLS", 
+    estimate_regression_performance(factors, returns, sens, "Constant OLS", 
                                     performance_record_mse, performance_record_wacc)
-    estimate_regression_performance(factors, returns, "Rolling OLS", 
+    estimate_regression_performance(factors, returns, sens, "Rolling OLS", 
                                     performance_record_mse, performance_record_wacc, rolling_ols_window=rolling_ols_window)
-    estimate_regression_performance(factors, returns, "Exponential rolling OLS", 
+    estimate_regression_performance(factors, returns, sens, "Exponential rolling OLS", 
                                     performance_record_mse, performance_record_wacc, 
                                     exp_rolling_ols_lambda=exp_rolling_ols_lambda)
-    estimate_regression_performance(factors, returns, "Kalman", 
+    estimate_regression_performance(factors, returns, sens, "Kalman", 
                                     performance_record_mse, performance_record_wacc, 
                                     kalman_covariance_ratio=kalman_covariance_ratio)
     #estimate_regression_performance(factors, returns, "Kalman naive trend", 
     #                                performance_record_mse, performance_record_wacc, 
     #                                kalman_covariance_ratio=kalman_covariance_ratio, 
     #                                nt_factor=nt_factor, nt_window=nt_window)
-    estimate_regression_performance(factors, returns, "Kalman stoch trend", 
+    estimate_regression_performance(factors, returns, sens, "Kalman local trend", 
+                                    performance_record_mse, performance_record_wacc, 
+                                    stkf_covariance_ratio=stkf_covariance_ratio)
+    estimate_regression_performance(factors, returns, sens, "Oracle", 
                                     performance_record_mse, performance_record_wacc, 
                                     stkf_covariance_ratio=stkf_covariance_ratio)
     return i, performance_record_mse, performance_record_wacc
@@ -360,6 +363,8 @@ def performance_summary(performance, metric):
 
     summary = pd.concat([ordered_metric, t_test, w_test], axis=1)
     summary.columns = [metric, 't-test differential p-value', 'Wilcoxon test differential p-value']
+    (summary.loc[:,metric] - summary.loc['Oracle', metric]).plot(kind='bar')
+    summary.to_latex("summary.tex")
     return summary
     
     
@@ -391,7 +396,7 @@ def compute_wilcoxon_pvalue(performance, reference=None):
         w_test.loc[reference] = np.nan
     return w_test
     
-def plot_t_stat_differences(performance, reference=None):
+def plot_perf_differences(performance, reference=None):
     if reference is None:
         ref_column = performance.iloc[:,0]
         purged_performance = performance.iloc[:,1:]
@@ -399,5 +404,5 @@ def plot_t_stat_differences(performance, reference=None):
         ref_column = performance.loc[:,reference]
         purged_performance = performance.drop([reference], axis=1)
     rel_performance = purged_performance.subtract(ref_column, axis = 0)
-    rel_performance.hist(layout=(purged_performance.shape[1], 1), bins=50, sharex=True, sharey=True)
+    rel_performance.hist(layout=(purged_performance.shape[1], 1), bins=200, sharex=True, sharey=True, figsize=(12,8))
     plt.tight_layout()
