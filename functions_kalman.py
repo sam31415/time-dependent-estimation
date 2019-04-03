@@ -18,8 +18,10 @@ colors = prop_cycle.by_key()['color']
 # Preparation
 # -----------
 
-# Sensitivities / factor loadings
 def get_sensitivities(timespan, sens_type):
+    """
+    Create random sensitivities / factor loadings.
+    """
     pi = 3.1415
     if sens_type == "Various smooth":
         t = np.linspace(0, timespan-1, timespan, dtype=np.float64)
@@ -37,9 +39,11 @@ def get_sensitivities(timespan, sens_type):
 
     return pd.concat([sens1, sens2, sens3], axis=1)
 
-    
-# Random sensitivities
+
 def create_random_sensitivity(timespan):
+    """
+    Create random smooth sensitivities using spleens.
+    """
     num_points = int(np.round(np.random.rand()*8) + 2)
     smoothing_parameter = np.exp(2*np.random.rand() - 1.5)
     x = np.floor(np.random.rand(num_points)*timespan)
@@ -56,8 +60,10 @@ def create_random_sensitivity(timespan):
     return sensitivity
     
 
-# Factors
 def get_factors(timespan):
+    """
+    Create random walk factors.
+    """
     factor1 = pd.Series(np.random.normal(size=timespan))
     factor2 = pd.Series(np.random.normal(size=timespan))
     factor3 = pd.Series(np.random.normal(size=timespan))
@@ -66,6 +72,9 @@ def get_factors(timespan):
     
 # Returns
 def get_returns(timespan, factors, sens, error_std):
+    """
+    Compute the return series from the factors and the sensitivities, using a standard factor model.
+    """
     error = np.random.normal(size=timespan)*error_std
     return pd.Series(np.multiply(factors, sens).sum(axis=1) + error)
 
@@ -74,17 +83,28 @@ def get_returns(timespan, factors, sens, error_std):
 # ----------------
 
 def estimate_sensitivities_cr(factors, returns):
+    """
+    Compute the sensitivities from the factors and the returns using an ordinary OLS regression.
+    """
     reg = linear_model.LinearRegression()
     reg.fit(factors, returns)
     return pd.DataFrame(data=[reg.coef_], index=factors.index)
     
     
 def estimate_sensitivities_rr(factors, returns, window):
+    """
+    Compute the sensitivities from the factors and the returns using a rolling OLS regression.
+    """
     model = PandasRollingOLS(y=returns, x=factors, window=window)
     return pd.DataFrame(model.beta)
     
     
 def estimate_sensitivities_err(factors, returns, lambd):
+    """
+    Compute the sensitivities from the factors and the returns using an exponentially weighted OLS regression.
+    lambd: Parameter governing the reactivity of the regression. Roughly equivalent to a rolling regression with window
+        2/lambd.
+    """
     num_factors = factors.shape[1]
     ff = np.zeros([num_factors, num_factors])
     fr = np.zeros(num_factors)
@@ -98,6 +118,11 @@ def estimate_sensitivities_err(factors, returns, lambd):
     
     
 def estimate_sensitivities_kf(factors, returns, covariance_ratio):
+    """
+    Compute the sensitivities from the factors and the returns using a simple Kalman filter.
+    covariance_ratio: The ratio of the (norm of) the covariances matrices associated respectively to the transition
+        equation and to the observation equation. The larger, the more reactive the filter is.
+    """
     n_dim_state=factors.shape[1]
     n_dim_obs=1
     observation_covariance = 1
@@ -115,13 +140,21 @@ def estimate_sensitivities_kf(factors, returns, covariance_ratio):
     
 
 def estimate_sensitivities_ntc(estimated_sensitivities, trend_factor, window):
+    """
+    Attempt to improve the estimated sensitivities by giving the estimation a trend: the new estimated sensitivities are
+    a mix of the current estimate and the average over a past window of time. The mix is governed by trend_factor.
+    Did not lead to conclusive results.
+    """
     rolling_mean = estimated_sensitivities.rolling(window, axis=0).mean()
     return (1 + trend_factor)*pd.DataFrame(estimated_sensitivities) - trend_factor*rolling_mean
     
     
 def estimate_sensitivities_stkf(factors, returns, covariance_ratio):
+    """
+    Compute the sensitivities from the factors and the returns using a local trend Kalman filter.
+    """
     n_dim_state=factors.shape[1]*2
-    n_dim_obs=1
+    n_dim_obs = 1
     observation_covariance = 1
     transition_covariance = covariance_ratio*np.eye(n_dim_state)
     observation_matrices = np.array([((i+1)%2)*factors.values[:, math.floor(i/2)] for i in range(n_dim_state)
@@ -143,6 +176,10 @@ def estimate_sensitivities_stkf(factors, returns, covariance_ratio):
 # ----------
     
 def plot_estimated_sensitivities(sens, est_sens, colors):
+    """
+    Plot the estimated sensitivities versus the real sensitivities.
+    """
+
     fig, ax = plt.subplots(2, 2, figsize=(12, 8))
     axc = ax[0,0]
     axc.plot(est_sens.iloc[:, 0], c=colors[0])
@@ -156,15 +193,24 @@ def plot_estimated_sensitivities(sens, est_sens, colors):
   
   
 def compute_estimated_returns(factors, est_sens):
+    """
+    Compute the estimated returns from the estimated sensitivities and the factors.
+    """
     return pd.Series(np.multiply(factors, est_sens.shift()).sum(axis=1))
 
     
 def plot_residuals(estimated_returns, returns):
+    """
+    Plot the residuals of the estimated returns.
+    """
     residuals = estimated_returns - returns
     plt.scatter(residuals.index, residuals, s=0.5)
    
    
 def print_mse_performance(estimated_returns, returns, name, performance_record_mse, verbose=True):
+    """
+    Compute, print and record the MSE for a given model.
+    """
     square_errors = np.square(estimated_returns - returns)
     mean_square_error = square_errors.sum()/len(estimated_returns)
     performance_record_mse[name] = mean_square_error
@@ -173,6 +219,9 @@ def print_mse_performance(estimated_returns, returns, name, performance_record_m
     
     
 def print_weighted_accuracy_performance(estimated_returns, returns, name, performance_record_wacc, verbose=True):
+    """
+    Compute, print and record the weighted accuracy for a given model.
+    """
     weights = abs(returns)
     correct_sign = -2*np.logical_xor(estimated_returns > 0, returns > 0) + 1
     weighted_accuracy = np.multiply(weights, correct_sign).mean()
@@ -182,6 +231,9 @@ def print_weighted_accuracy_performance(estimated_returns, returns, name, perfor
    
    
 def plot_prediction_performance(factors, returns, est_sens, name, performance_record_mse, performance_record_wacc):
+    """
+    Compute, print and record the MSE and the weighted accuracy for a given model, and plot the prediction residuals.
+    """
     estimated_returns = compute_estimated_returns(factors, est_sens)
     print_mse_performance(estimated_returns, returns, name, performance_record_mse)
     print_weighted_accuracy_performance(estimated_returns, returns, name, performance_record_wacc)
@@ -190,6 +242,9 @@ def plot_prediction_performance(factors, returns, est_sens, name, performance_re
 
 def estimate_regression_performance(factors, returns, sensitivities, name, performance_record_mse,
                                     performance_record_wacc, **kwargs):
+    """
+    Compute, print and record the MSE and the weighted accuracy for all models.
+    """
     start_time = 1000
     if name[:12] == "Constant OLS":
         estimated_sensitivities = estimate_sensitivities_cr(factors, returns)
@@ -238,8 +293,9 @@ def estimate_regression_performance(factors, returns, sensitivities, name, perfo
 
 def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, return_noise, **kwargs):
     """
-    The keyword arguments passed should correspond to the parameters of the algorithms and consists of lists of values to 
-    try (a grid search).
+    Compare the performance of a model for various choice of hyperparameters (grid search).
+    The keyword arguments passed should correspond to the parameters of the algorithms and consists of lists of values
+    to try (a grid search).
     """
     parameter_list = []
     value_list = []
@@ -268,6 +324,9 @@ def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, retu
 
 
 def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name, all_values, i):
+    """
+    Auxiliary function to generate samples for the hyperparameter search.
+    """
     print(i)
     performance_record_mse = {}
     performance_record_wacc = {}
@@ -286,6 +345,9 @@ def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name
    
    
 def get_performance_data(num_samples, sens_type, timespan, return_noise, algo_parameters, sens=None):
+    """
+    Generate num_samples samples and record the performance of the models on each of them.
+    """
     list_performance_record_mse = []
     list_performance_record_wacc = []
     n_processes = 7
@@ -303,6 +365,9 @@ def get_performance_data(num_samples, sens_type, timespan, return_noise, algo_pa
     
 
 def generate_sample_performance(sens_type, timespan, return_noise, algo_parameters, sens, i):
+    """
+    Compute the performance of all the models on a single sample.
+    """
     performance_record_mse = {}
     performance_record_wacc = {}
     rolling_ols_window = algo_parameters['rolling_ols_window']
@@ -342,14 +407,23 @@ def generate_sample_performance(sens_type, timespan, return_noise, algo_paramete
     
 
 def wil_pvalue(x):
+    """
+    Return the Wilcoxon p-value.
+    """
     return wilcoxon(x)[1]
 
 
 def t_pvalue(x):
+    """
+    Return the t-test p-value.
+    """
     return ttest_rel(x, np.zeros(len(performance)))[1]
 
 
 def performance_summary(performance, metric):
+    """
+    Compute a performance summary, given the performance of the models on a number of samples.
+    """
     mean_metric = performance.mean()
     if metric == "Weighted accuracy":
         ordered_metric = mean_metric.sort_values(ascending=False)
@@ -369,6 +443,9 @@ def performance_summary(performance, metric):
     
 
 def compute_t_stat(performance, reference=None):
+    """
+    Compute the t-statistics of the difference of performance between a given model and the other models.
+    """
     if reference is None:
         ref_column = performance.iloc[:, 0]
     else:
@@ -383,6 +460,9 @@ def compute_t_stat(performance, reference=None):
 
 
 def compute_wilcoxon_pvalue(performance, reference=None):
+    """
+    Compute the Wilcoxon of the difference of performance between a given model and the other models.
+    """
     if reference is None:
         ref_column = performance.iloc[:, 0]
     else:
@@ -397,6 +477,9 @@ def compute_wilcoxon_pvalue(performance, reference=None):
 
 
 def plot_perf_differences(performance, reference=None):
+    """
+    Plot a histogram of the performance difference between each model and a given one.
+    """
     if reference is None:
         ref_column = performance.iloc[:, 0]
         purged_performance = performance.iloc[:, 1:]
