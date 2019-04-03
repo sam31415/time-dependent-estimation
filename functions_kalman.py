@@ -419,7 +419,7 @@ def t_pvalue(x):
     """
     Return the t-test p-value.
     """
-    return ttest_rel(x, np.zeros(len(performance)))[1]
+    return ttest_rel(x, np.zeros(len(x)))[1]
 
 
 def performance_summary(performance, metric):
@@ -439,7 +439,9 @@ def performance_summary(performance, metric):
 
     summary = pd.concat([ordered_metric, t_test, w_test], axis=1)
     summary.columns = [metric, 't-test differential p-value', 'Wilcoxon test differential p-value']
-    (summary.loc[:,metric] - summary.loc['Oracle', metric]).plot(kind='bar')
+    (summary.loc[:, metric] - summary.loc['Oracle', metric]).plot(kind='barh',
+                                                                  figsize=(12, 5),
+                                                                  title=f"{metric} relative to Oracle")
     summary.to_latex("summary.tex")
     return summary
     
