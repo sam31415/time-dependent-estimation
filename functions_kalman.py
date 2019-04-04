@@ -243,22 +243,21 @@ def plot_prediction_performance(factors, returns, est_sens, name, performance_re
   
 
 def estimate_regression_performance(factors, returns, sensitivities, name, performance_record_mse,
-                                    performance_record_wacc, **kwargs):
+                                    performance_record_wacc, burn_period, **kwargs):
     """
     Compute, print and record the MSE and the weighted accuracy for all models.
     """
-    start_time = 1000
     if name[:12] == "Constant OLS":
         estimated_sensitivities = estimate_sensitivities_cr(factors, returns)
-        estimated_sensitivities = estimated_sensitivities.iloc[start_time:, :]
+        estimated_sensitivities = estimated_sensitivities.loc[burn_period:, :]
     elif name[:11] == "Rolling OLS":
         rolling_ols_window = kwargs['rolling_ols_window']
         estimated_sensitivities = estimate_sensitivities_rr(factors, returns, rolling_ols_window)
-        estimated_sensitivities = estimated_sensitivities.iloc[start_time - rolling_ols_window + 1:, :]
+        estimated_sensitivities = estimated_sensitivities.loc[burn_period:, :]
     elif name[:23] == "Exponential rolling OLS":
         exp_rolling_ols_lambda = kwargs['exp_rolling_ols_lambda']
         estimated_sensitivities = estimate_sensitivities_err(factors, returns, exp_rolling_ols_lambda)
-        estimated_sensitivities = estimated_sensitivities.iloc[start_time:, :]
+        estimated_sensitivities = estimated_sensitivities.loc[burn_period:, :]
     elif name[:18] == "Kalman naive trend":
         kalman_covariance_ratio = kwargs['kalman_covariance_ratio']
         nt_factor = kwargs['nt_factor']
@@ -267,33 +266,33 @@ def estimate_regression_performance(factors, returns, sensitivities, name, perfo
                                                                kalman_covariance_ratio)
         estimated_sensitivities = estimate_sensitivities_ntc(estimated_sensitivities_kf, 
                                                              nt_factor, nt_window)
-        estimated_sensitivities = estimated_sensitivities.iloc[start_time:, :]
+        estimated_sensitivities = estimated_sensitivities.loc[burn_period:, :]
     elif name[:18] == "Kalman local trend":
         stkf_covariance_ratio = kwargs['stkf_covariance_ratio']
         estimated_sensitivities = estimate_sensitivities_stkf(factors, returns, stkf_covariance_ratio)
-        estimated_sensitivities = estimated_sensitivities.iloc[start_time:, :]
+        estimated_sensitivities = estimated_sensitivities.loc[burn_period:, :]
     elif name[:6] == "Kalman":
         kalman_covariance_ratio = kwargs['kalman_covariance_ratio']
         estimated_sensitivities = estimate_sensitivities_kf(factors, returns, kalman_covariance_ratio)
-        estimated_sensitivities = estimated_sensitivities.iloc[start_time:, :]
+        estimated_sensitivities = estimated_sensitivities.loc[burn_period:, :]
     elif name == "Oracle":
-        estimated_sensitivities = sensitivities.iloc[start_time:, :]
+        estimated_sensitivities = sensitivities.loc[burn_period:, :]
     else:
         print("Unknown name")
-    estimated_returns = compute_estimated_returns(factors.iloc[start_time:, :], estimated_sensitivities)
+    estimated_returns = compute_estimated_returns(factors.loc[burn_period:, :], estimated_sensitivities)
     print_mse_performance(estimated_returns, 
-                          returns.iloc[start_time:], 
+                          returns.loc[burn_period:],
                           name, 
                           performance_record_mse,
                           verbose=False)
     print_weighted_accuracy_performance(estimated_returns, 
-                                        returns.iloc[start_time:], 
+                                        returns.loc[burn_period:],
                                         name, 
                                         performance_record_wacc,
                                         verbose=False) 
 
 
-def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, return_noise, **kwargs):
+def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, return_noise, burn_period, **kwargs):
     """
     Compare the performance of a model for various choice of hyperparameters (grid search).
     The keyword arguments passed should correspond to the parameters of the algorithms and consists of lists of values
@@ -313,7 +312,8 @@ def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, retu
     for i in range(len(all_values)):
         all_values[i] = dict(zip(parameter_list, all_values[i]))
     
-    func_parallel = partial(generate_sample_hyperparameters, sens_type, timespan, return_noise, algo_name, all_values)
+    func_parallel = partial(generate_sample_hyperparameters, sens_type, timespan, return_noise, algo_name, all_values,
+                            burn_period)
     
     with mp.Pool(n_processes) as pool:
         outputs = pool.imap_unordered(func_parallel, range(num_samples))
@@ -325,7 +325,7 @@ def compare_hyperparameters_mp(algo_name, num_samples, timespan, sens_type, retu
     return pd.DataFrame(list_performance_record_mse), pd.DataFrame(list_performance_record_wacc)
 
 
-def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name, all_values, i):
+def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name, all_values, burn_period, i):
     """
     Auxiliary function to generate samples for the hyperparameter search.
     """
@@ -342,11 +342,12 @@ def generate_sample_hyperparameters(sens_type, timespan, return_noise, algo_name
 
     for kwargs in all_values:
         name = algo_name + ' - ' + str(kwargs)
-        estimate_regression_performance(factors, returns, sens, name, performance_record_mse, performance_record_wacc, **kwargs)
+        estimate_regression_performance(factors, returns, sens, name, performance_record_mse, performance_record_wacc,
+                                        burn_period, **kwargs)
     return i, performance_record_mse, performance_record_wacc
    
    
-def get_performance_data(num_samples, sens_type, timespan, return_noise, algo_parameters, sens=None):
+def get_performance_data(num_samples, sens_type, timespan, return_noise, burn_period, algo_parameters, sens=None):
     """
     Generate num_samples samples and record the performance of the models on each of them.
     """
@@ -354,7 +355,8 @@ def get_performance_data(num_samples, sens_type, timespan, return_noise, algo_pa
     list_performance_record_wacc = []
     n_processes = 7
     
-    func_parallel = partial(generate_sample_performance, sens_type, timespan, return_noise, algo_parameters, sens)
+    func_parallel = partial(generate_sample_performance, sens_type, timespan, return_noise, algo_parameters, sens,
+                            burn_period)
     
     with mp.Pool(n_processes) as pool:
         outputs = pool.imap_unordered(func_parallel, range(num_samples))
@@ -366,7 +368,7 @@ def get_performance_data(num_samples, sens_type, timespan, return_noise, algo_pa
     return pd.DataFrame(list_performance_record_mse), pd.DataFrame(list_performance_record_wacc)
     
 
-def generate_sample_performance(sens_type, timespan, return_noise, algo_parameters, sens, i):
+def generate_sample_performance(sens_type, timespan, return_noise, algo_parameters, sens, burn_period, i):
     """
     Compute the performance of all the models on a single sample.
     """
@@ -386,24 +388,25 @@ def generate_sample_performance(sens_type, timespan, return_noise, algo_paramete
     returns = get_returns(timespan, factors, sens, return_noise)
             
     estimate_regression_performance(factors, returns, sens, "Constant OLS", 
-                                    performance_record_mse, performance_record_wacc)
+                                    performance_record_mse, performance_record_wacc, burn_period)
     estimate_regression_performance(factors, returns, sens, "Rolling OLS", 
-                                    performance_record_mse, performance_record_wacc, rolling_ols_window=rolling_ols_window)
+                                    performance_record_mse, performance_record_wacc, burn_period,
+                                    rolling_ols_window=rolling_ols_window)
     estimate_regression_performance(factors, returns, sens, "Exponential rolling OLS", 
-                                    performance_record_mse, performance_record_wacc, 
+                                    performance_record_mse, performance_record_wacc, burn_period,
                                     exp_rolling_ols_lambda=exp_rolling_ols_lambda)
     estimate_regression_performance(factors, returns, sens, "Kalman", 
-                                    performance_record_mse, performance_record_wacc, 
+                                    performance_record_mse, performance_record_wacc, burn_period,
                                     kalman_covariance_ratio=kalman_covariance_ratio)
     # estimate_regression_performance(factors, returns, "Kalman naive trend",
-    #                                performance_record_mse, performance_record_wacc, 
+    #                                performance_record_mse, performance_record_wacc, burn_period,
     #                                kalman_covariance_ratio=kalman_covariance_ratio, 
     #                                nt_factor=nt_factor, nt_window=nt_window)
     estimate_regression_performance(factors, returns, sens, "Kalman local trend", 
-                                    performance_record_mse, performance_record_wacc, 
+                                    performance_record_mse, performance_record_wacc, burn_period,
                                     stkf_covariance_ratio=stkf_covariance_ratio)
     estimate_regression_performance(factors, returns, sens, "Oracle", 
-                                    performance_record_mse, performance_record_wacc, 
+                                    performance_record_mse, performance_record_wacc, burn_period,
                                     stkf_covariance_ratio=stkf_covariance_ratio)
     return i, performance_record_mse, performance_record_wacc
     
@@ -491,5 +494,9 @@ def plot_perf_differences(performance, reference=None):
         ref_column = performance.loc[:, reference]
         purged_performance = performance.drop([reference], axis=1)
     rel_performance = purged_performance.subtract(ref_column, axis=0)
-    rel_performance.hist(layout=(purged_performance.shape[1], 1), bins=200, sharex=True, sharey=True, figsize=(12, 8))
+    rel_performance.hist(layout=(purged_performance.shape[1], 1),
+                         bins=200,
+                         sharex=True,
+                         sharey=True,
+                         figsize=(12, 2 + 1.5*purged_performance.shape[1]))
     plt.tight_layout()
