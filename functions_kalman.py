@@ -42,7 +42,7 @@ def get_sensitivities(timespan, sens_type):
 
 def create_random_sensitivity(timespan):
     """
-    Create random smooth sensitivities using spleens.
+    Create random smooth sensitivities using splines.
     """
     num_points = int(np.round(np.random.rand()*8) + 2)
     smoothing_parameter = np.exp(2*np.random.rand() - 1.5)
@@ -51,9 +51,9 @@ def create_random_sensitivity(timespan):
     x.sort()
     y = 2*np.random.rand(num_points + 2) - 1
 
-    spleen = splrep(x, y, s=smoothing_parameter)
+    spline = splrep(x, y, s=smoothing_parameter)
     t = np.linspace(0,timespan-1,timespan,dtype=np.float64)
-    values = splev(t, spleen)
+    values = splev(t, spline)
     sensitivity = pd.Series(data=values, index=t)
     sensitivity[sensitivity < -5] = -5
     sensitivity[sensitivity > 5] = 5
