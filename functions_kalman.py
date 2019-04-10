@@ -207,8 +207,7 @@ def plot_residuals(estimated_returns, returns):
     plt.gca().set_title("Residuals")
     plt.scatter(residuals.index, residuals, s=0.5)
 
-   
-   
+
 def print_mse_performance(estimated_returns, returns, name, performance_record_mse, verbose=True):
     """
     Compute, print and record the MSE for a given model.
